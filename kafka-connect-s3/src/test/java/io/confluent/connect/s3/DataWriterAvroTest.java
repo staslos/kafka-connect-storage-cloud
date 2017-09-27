@@ -54,6 +54,7 @@ import java.util.concurrent.TimeUnit;
 
 import io.confluent.connect.s3.format.avro.AvroFormat;
 import io.confluent.connect.s3.format.avro.AvroUtils;
+import io.confluent.connect.s3.storage.CompressionType;
 import io.confluent.connect.s3.storage.S3Storage;
 import io.confluent.connect.s3.util.FileUtils;
 import io.confluent.connect.storage.hive.HiveConfig;
@@ -757,7 +758,7 @@ public class DataWriterAvroTest extends TestWithMockedS3 {
 
         FileUtils.fileKeyToCommit(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset, extension, ZERO_PAD_FMT);
         Collection<Object> records = readRecords(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset,
-                                                 extension, ZERO_PAD_FMT, S3_TEST_BUCKET_NAME, s3);
+                                                 extension, ZERO_PAD_FMT, CompressionType.NONE, S3_TEST_BUCKET_NAME, s3);
         assertEquals(size, records.size());
         verifyContents(sinkRecords, j, records);
         j += size;
@@ -778,4 +779,3 @@ public class DataWriterAvroTest extends TestWithMockedS3 {
     assertTrue(Objects.equals(actualOffsets, expectedOffsets));
   }
 }
-
