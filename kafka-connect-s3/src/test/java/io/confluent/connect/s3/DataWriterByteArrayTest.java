@@ -19,6 +19,7 @@ package io.confluent.connect.s3;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 import io.confluent.connect.s3.format.bytearray.ByteArrayFormat;
+import io.confluent.connect.s3.storage.CompressionType;
 import io.confluent.connect.s3.storage.S3Storage;
 import io.confluent.connect.s3.util.FileUtils;
 import io.confluent.connect.storage.partitioner.DefaultPartitioner;
@@ -87,6 +88,23 @@ public class DataWriterByteArrayTest extends TestWithMockedS3 {
 
   @Test
   public void testNoSchema() throws Exception {
+    CompressionType compressionType = CompressionType.GZIP;
+    localProps.put(S3SinkConnectorConfig.FORMAT_CLASS_CONFIG, ByteArrayFormat.class.getName());
+    localProps.put(S3SinkConnectorConfig.COMPRESSION_TYPE_CONFIG, compressionType.name);
+    setUp();
+    task = new S3SinkTask(connectorConfig, context, storage, partitioner, format, SYSTEM_TIME);
+
+    List<SinkRecord> sinkRecords = createByteArrayRecordsWithoutSchema(7 * context.assignment().size(), 0, context.assignment());
+    task.put(sinkRecords);
+    task.close(context.assignment());
+    task.stop();
+
+    long[] validOffsets = {0, 3, 6};
+    verify(sinkRecords, validOffsets, context.assignment(), ".bin", compressionType);
+  }
+
+  @Test
+  public void testGzipCompression() throws Exception {
     localProps.put(S3SinkConnectorConfig.FORMAT_CLASS_CONFIG, ByteArrayFormat.class.getName());
     setUp();
     task = new S3SinkTask(connectorConfig, context, storage, partitioner, format, SYSTEM_TIME);
@@ -150,20 +168,21 @@ public class DataWriterByteArrayTest extends TestWithMockedS3 {
     return partitioner.generatePartitionedPath(topic, encodedPartition);
   }
 
-  protected List<String> getExpectedFiles(long[] validOffsets, TopicPartition tp, String extension) {
+  protected List<String> getExpectedFiles(long[] validOffsets, TopicPartition tp, String extension, CompressionType compressionType) {
     List<String> expectedFiles = new ArrayList<>();
     for (int i = 1; i < validOffsets.length; ++i) {
       long startOffset = validOffsets[i - 1];
       expectedFiles.add(FileUtils.fileKeyToCommit(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset,
-                                                  extension, ZERO_PAD_FMT));
+                                                  extension + compressionType.extension, ZERO_PAD_FMT));
     }
     return expectedFiles;
   }
 
-  protected void verifyFileListing(long[] validOffsets, Set<TopicPartition> partitions, String extension) throws IOException {
+  protected void verifyFileListing(long[] validOffsets, Set<TopicPartition> partitions, String extension,
+                                   CompressionType compressionType) throws IOException {
     List<String> expectedFiles = new ArrayList<>();
     for (TopicPartition tp : partitions) {
-      expectedFiles.addAll(getExpectedFiles(validOffsets, tp, extension));
+      expectedFiles.addAll(getExpectedFiles(validOffsets, tp, extension, compressionType));
     }
     verifyFileListing(expectedFiles);
   }
@@ -193,7 +212,12 @@ public class DataWriterByteArrayTest extends TestWithMockedS3 {
 
   protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions,
                         String extension) throws IOException {
-    verify(sinkRecords, validOffsets, partitions, extension, false);
+    verify(sinkRecords, validOffsets, partitions, extension, CompressionType.NONE, false);
+  }
+
+  protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions,
+                        String extension, CompressionType compressionType) throws IOException {
+    verify(sinkRecords, validOffsets, partitions, extension, compressionType, false);
   }
 
   /**
@@ -205,10 +229,10 @@ public class DataWriterByteArrayTest extends TestWithMockedS3 {
    * @throws IOException
    */
   protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions,
-                        String extension, boolean skipFileListing)
+                        String extension, CompressionType compressionType, boolean skipFileListing)
       throws IOException {
     if (!skipFileListing) {
-      verifyFileListing(validOffsets, partitions, extension);
+      verifyFileListing(validOffsets, partitions, extension, compressionType);
     }
 
     for (TopicPartition tp : partitions) {
@@ -218,7 +242,7 @@ public class DataWriterByteArrayTest extends TestWithMockedS3 {
 
         FileUtils.fileKeyToCommit(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset, extension, ZERO_PAD_FMT);
         Collection<Object> records = readRecords(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset,
-                                                 extension, ZERO_PAD_FMT, S3_TEST_BUCKET_NAME, s3);
+                                                 extension, ZERO_PAD_FMT, compressionType, S3_TEST_BUCKET_NAME, s3);
         // assertEquals(size, records.size());
         verifyContents(sinkRecords, j, records);
         j += size;

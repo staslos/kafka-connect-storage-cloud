@@ -45,6 +45,7 @@ import java.util.UUID;
 import io.confluent.connect.s3.format.avro.AvroUtils;
 import io.confluent.connect.s3.format.bytearray.ByteArrayUtils;
 import io.confluent.connect.s3.format.json.JsonUtils;
+import io.confluent.connect.s3.storage.CompressionType;
 import io.confluent.connect.s3.util.FileUtils;
 import io.confluent.connect.storage.common.StorageCommonConfig;
 
@@ -107,18 +108,20 @@ public class TestWithMockedS3 extends S3SinkConnectorTestBase {
   }
 
   public static Collection<Object> readRecords(String topicsDir, String directory, TopicPartition tp, long startOffset,
-                                               String extension, String zeroPadFormat, String bucketName,
-                                               AmazonS3 s3) throws IOException {
-      String fileKey = FileUtils.fileKeyToCommit(topicsDir, directory, tp, startOffset, extension, zeroPadFormat);
+                                               String extension, String zeroPadFormat, CompressionType compressionType,
+                                               String bucketName, AmazonS3 s3) throws IOException {
+      String fileKey = FileUtils.fileKeyToCommit(topicsDir, directory, tp, startOffset,
+          extension + compressionType.extension, zeroPadFormat);
       if (".avro".equals(extension)) {
         return readRecordsAvro(bucketName, fileKey, s3);
       } else if (".json".equals(extension)) {
-        return readRecordsJson(bucketName, fileKey, s3);
+        return readRecordsJson(bucketName, fileKey, s3, compressionType);
       } else if (".bin".equals(extension)) {
-        return readRecordsByteArray(bucketName, fileKey, s3,
+        return readRecordsByteArray(bucketName, fileKey, s3, compressionType,
             S3SinkConnectorConfig.FORMAT_BYTEARRAY_LINE_SEPARATOR_DEFAULT.getBytes());
       } else if (".SEPARATORjson".equals(extension)) {
-        return readRecordsByteArray(bucketName, fileKey, s3, "SEPARATOR".getBytes());
+        return readRecordsByteArray(bucketName, fileKey, s3, compressionType,
+            "SEPARATOR".getBytes());
       } else {
         throw new IllegalArgumentException("Unknown extension: " + extension);
       }
@@ -131,18 +134,20 @@ public class TestWithMockedS3 extends S3SinkConnectorTestBase {
       return AvroUtils.getRecords(in);
   }
 
-  public static Collection<Object> readRecordsJson(String bucketName, String fileKey, AmazonS3 s3) throws IOException {
+  public static Collection<Object> readRecordsJson(String bucketName, String fileKey, AmazonS3 s3,
+                                                   CompressionType compressionType) throws IOException {
       log.debug("Reading records from bucket '{}' key '{}': ", bucketName, fileKey);
       InputStream in = s3.getObject(bucketName, fileKey).getObjectContent();
 
-      return JsonUtils.getRecords(in);
+      return JsonUtils.getRecords(compressionType.wrapForInput(in));
   }
 
-  public static Collection<Object> readRecordsByteArray(String bucketName, String fileKey, AmazonS3 s3, byte[] lineSeparatorBytes) throws IOException {
+  public static Collection<Object> readRecordsByteArray(String bucketName, String fileKey, AmazonS3 s3,
+                                                        CompressionType compressionType, byte[] lineSeparatorBytes) throws IOException {
       log.debug("Reading records from bucket '{}' key '{}': ", bucketName, fileKey);
       InputStream in = s3.getObject(bucketName, fileKey).getObjectContent();
 
-      return ByteArrayUtils.getRecords(in, lineSeparatorBytes);
+      return ByteArrayUtils.getRecords(compressionType.wrapForInput(in), lineSeparatorBytes);
   }
 
   @Override

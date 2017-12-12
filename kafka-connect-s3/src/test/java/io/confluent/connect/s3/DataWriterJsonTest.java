@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.confluent.connect.s3.format.json.JsonFormat;
+import io.confluent.connect.s3.storage.CompressionType;
 import io.confluent.connect.s3.storage.S3Storage;
 import io.confluent.connect.s3.util.FileUtils;
 import io.confluent.connect.storage.partitioner.DefaultPartitioner;
@@ -122,6 +123,23 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
     verify(sinkRecords, validOffsets, context.assignment());
   }
 
+  @Test
+  public void testGzipCompression() throws Exception {
+    CompressionType compressionType = CompressionType.GZIP;
+    localProps.put(S3SinkConnectorConfig.FORMAT_CLASS_CONFIG, JsonFormat.class.getName());
+    localProps.put(S3SinkConnectorConfig.COMPRESSION_TYPE_CONFIG, compressionType.name);
+    setUp();
+    task = new S3SinkTask(connectorConfig, context, storage, partitioner, format, SYSTEM_TIME);
+
+    List<SinkRecord> sinkRecords = createRecordsInterleaved(7 * context.assignment().size(), 0, context.assignment());
+    task.put(sinkRecords);
+    task.close(context.assignment());
+    task.stop();
+
+    long[] validOffsets = {0, 3, 6};
+    verify(sinkRecords, validOffsets, context.assignment(), compressionType);
+  }
+
   protected List<SinkRecord> createRecordsInterleaved(int size, long startOffset, Set<TopicPartition> partitions) {
     String key = "key";
     Schema schema = createSchema();
@@ -171,20 +189,21 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
     return partitioner.generatePartitionedPath(topic, encodedPartition);
   }
 
-  protected List<String> getExpectedFiles(long[] validOffsets, TopicPartition tp) {
+  protected List<String> getExpectedFiles(long[] validOffsets, TopicPartition tp, CompressionType compressionType) {
     List<String> expectedFiles = new ArrayList<>();
     for (int i = 1; i < validOffsets.length; ++i) {
       long startOffset = validOffsets[i - 1];
       expectedFiles.add(FileUtils.fileKeyToCommit(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset,
-                                                  extension, ZERO_PAD_FMT));
+                                                  extension + compressionType.extension, ZERO_PAD_FMT));
     }
     return expectedFiles;
   }
 
-  protected void verifyFileListing(long[] validOffsets, Set<TopicPartition> partitions) throws IOException {
+  protected void verifyFileListing(long[] validOffsets, Set<TopicPartition> partitions,
+                                   CompressionType compressionType) throws IOException {
     List<String> expectedFiles = new ArrayList<>();
     for (TopicPartition tp : partitions) {
-      expectedFiles.addAll(getExpectedFiles(validOffsets, tp));
+      expectedFiles.addAll(getExpectedFiles(validOffsets, tp, compressionType));
     }
     verifyFileListing(expectedFiles);
   }
@@ -215,9 +234,15 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
     }
   }
 
+  protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions,
+                        CompressionType compressionType)
+      throws IOException {
+    verify(sinkRecords, validOffsets, partitions, compressionType, false);
+  }
+
   protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions)
       throws IOException {
-    verify(sinkRecords, validOffsets, partitions, false);
+    verify(sinkRecords, validOffsets, partitions, CompressionType.NONE, false);
   }
 
   /**
@@ -229,10 +254,10 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
    * @throws IOException
    */
   protected void verify(List<SinkRecord> sinkRecords, long[] validOffsets, Set<TopicPartition> partitions,
-                        boolean skipFileListing)
+                        CompressionType compressionType, boolean skipFileListing)
       throws IOException {
     if (!skipFileListing) {
-      verifyFileListing(validOffsets, partitions);
+      verifyFileListing(validOffsets, partitions, compressionType);
     }
 
     for (TopicPartition tp : partitions) {
@@ -242,7 +267,7 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
 
         FileUtils.fileKeyToCommit(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset, extension, ZERO_PAD_FMT);
         Collection<Object> records = readRecords(topicsDir, getDirectory(tp.topic(), tp.partition()), tp, startOffset,
-                                                 extension, ZERO_PAD_FMT, S3_TEST_BUCKET_NAME, s3);
+                                                 extension, ZERO_PAD_FMT, compressionType, S3_TEST_BUCKET_NAME, s3);
         // assertEquals(size, records.size());
         verifyContents(sinkRecords, j, records);
         j += size;
@@ -250,4 +275,3 @@ public class DataWriterJsonTest extends TestWithMockedS3 {
     }
   }
 }
-
